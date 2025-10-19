@@ -1,0 +1,136 @@
+---
+- name: 보안 준수 CentOS 점검 플레이북
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+  
+  tasks:
+    # ===========================================
+    # 계정관리: 현재 사용자 정보 확인
+    # ===========================================
+    - name: "[계정관리] 현재 사용자 정보 확인"
+      command: "whoami"
+      register: current_user
+      changed_when: false
+      
+    - name: "[계정관리] 사용자 ID 확인"
+      command: "id"
+      register: user_id
+      changed_when: false
+      
+    # ===========================================
+    # 서비스: 방화벽 상태 확인
+    # ===========================================
+    - name: "[서비스] 방화벽 서비스 상태 확인"
+      command: "systemctl is-active firewalld"
+      register: firewall_status
+      changed_when: false
+      failed_when: false
+      
+    - name: "[서비스] 방화벽 활성화 상태 확인"
+      command: "systemctl is-enabled firewalld"
+      register: firewall_enabled
+      changed_when: false
+      failed_when: false
+      
+    # ===========================================
+    # 파일 및 디렉터리: 홈 디렉터리 권한 확인
+    # ===========================================
+    - name: "[파일권한] 현재 사용자 홈 디렉터리 정보"
+      stat:
+        path: "{{ ansible_env.HOME }}"
+      register: home_stat
+      
+    - name: "[파일권한] /tmp 디렉터리 권한 확인"
+      stat:
+        path: "/tmp"
+      register: tmp_stat
+      
+    # ===========================================
+    # 패치 점검: 패키지 관리자 상태 확인
+    # ===========================================
+    - name: "[패치점검] YUM 패키지 매니저 상태"
+      command: "rpm -qa | head -5"
+      register: rpm_check
+      changed_when: false
+      
+    - name: "[패치점검] 시스템 시간 확인"
+      command: "date"
+      register: system_date
+      changed_when: false
+      
+    # ===========================================
+    # 추가 시스템 정보 수집
+    # ===========================================
+    - name: "[시스템] 디스크 사용량 확인"
+      command: "df -h /"
+      register: disk_usage
+      changed_when: false
+      
+    - name: "[시스템] 메모리 사용량 확인"
+      command: "free -h"
+      register: memory_usage
+      changed_when: false
+      
+    - name: "[시스템] 실행 중인 프로세스 수 확인"
+      command: "ps aux | wc -l"
+      register: process_count
+      changed_when: false
+      
+    # ===========================================
+    # 결과 종합 및 출력
+    # ===========================================
+    - name: "보안 점검 결과 출력"
+      debug:
+        msg: |
+          ==========================================
+          CentOS 보안 점검 결과 (보안 준수 버전)
+          ==========================================
+          
+          📋 점검 시간: {{ ansible_date_time.iso8601 }}
+          🖥️  시스템 정보: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          
+          🔐 계정 관리 점검:
+             - 현재 사용자: {{ current_user.stdout }}
+             - 사용자 정보: {{ user_id.stdout }}
+          
+          ⚙️  서비스 점검:
+             - 방화벽 상태: {{ firewall_status.stdout | default('inactive') }}
+             - 방화벽 자동시작: {{ firewall_enabled.stdout | default('disabled') }}
+          
+          📁 파일 및 디렉터리 점검:
+             - 홈 디렉터리 권한: {{ home_stat.stat.mode if home_stat.stat.exists else 'N/A' }}
+             - /tmp 디렉터리 권한: {{ tmp_stat.stat.mode }}
+          
+          🔄 패치 점검:
+             - 설치된 패키지 (상위 5개): {{ rpm_check.stdout_lines | length }}개 라인 출력
+             - 시스템 시간: {{ system_date.stdout }}
+          
+          💾 시스템 상태:
+             - 루트 디스크 사용량: {{ disk_usage.stdout_lines[1] if disk_usage.stdout_lines|length > 1 else 'N/A' }}
+             - 메모리 사용량: {{ memory_usage.stdout_lines[1] if memory_usage.stdout_lines|length > 1 else 'N/A' }}
+             - 실행 중인 프로세스: {{ process_count.stdout }}개
+          
+    - name: "점검 결과 분석"
+      debug:
+        msg: |
+          ==========================================
+          점검 결과 분석
+          ==========================================
+          
+          ✅ 양호한 설정:
+          {% if firewall_status.stdout == 'active' %}   - 방화벽이 활성화되어 있습니다{% endif %}
+          {% if home_stat.stat.mode|string|length == 4 and home_stat.stat.mode|string|int <= 755 %}   - 홈 디렉터리 권한이 적절합니다{% endif %}
+          
+          ⚠️  주의 필요:
+          {% if firewall_status.stdout != 'active' %}   - 방화벽이 비활성화되어 있습니다{% endif %}
+          {% if process_count.stdout|int > 200 %}   - 실행 중인 프로세스가 많습니다 ({{ process_count.stdout }}개){% endif %}
+          
+          🎯 권장사항:
+             - 정기적인 보안 점검 수행
+             - 시스템 패키지 업데이트 확인
+             - 로그 파일 모니터링
+          
+          ==========================================
+          보안 점검 완료
+          ==========================================

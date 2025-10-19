@@ -1,0 +1,37 @@
+---
+- name: OS별 점검 Python 실행 (스크립트 실행 및 결과 파일 복사)
+  hosts: all
+  become: yes
+  vars:
+    script_path: "{{ playbook_dir }}/ubuntu_check.py"
+    host_id: "{{ host_id | default(inventory_hostname) }}"
+    username: "{{ username }}"
+
+  tasks:
+    - name: 점검 Python 스크립트 복사
+      copy:
+        src: "{{ script_path }}"
+        dest: /tmp/ubuntu_check.py
+        mode: "0755"
+
+    - name: 점검 Python 스크립트 실행
+      command: /usr/bin/python3 /tmp/ubuntu_check.py
+      environment:
+        HOST_ID: "{{ host_id }}"
+        USERNAME: "{{ username }}"
+
+    - name: 결과 파일 찾기 (가장 최근 파일)
+      shell: ls -t /tmp/Results_{{ host_id }}_{{ username }}_*.csv | head -n 1
+      register: result_file_path
+      changed_when: false
+
+    - name: 결과 파일 경로 확인
+      debug:
+        msg: "{{ result_file_path.stdout }}"
+
+    - name: 결과 파일 가져오기
+      fetch:
+        src: "{{ result_file_path.stdout }}"
+        dest: "{{ playbook_dir }}/collected_results/"
+        flat: yes
+      when: result_file_path.stdout | length > 0

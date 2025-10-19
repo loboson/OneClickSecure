@@ -1,0 +1,22 @@
+- name: 보안 준수 시스템 점검
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+  
+  tasks:
+    - name: 디스크 사용량 확인
+      command: df -h
+      register: disk_usage
+      changed_when: false
+      
+    - name: 메모리 사용량 확인
+      command: free -h
+      register: memory_usage
+      changed_when: false
+      
+    - name: 시스템 정보 출력
+      debug:
+        msg: |
+          === 시스템 점검 결과 ===
+          디스크: {{ disk_usage.stdout_lines[1] if disk_usage.stdout_lines|length > 1 else '정보 없음' }}
+          메모리: {{ memory_usage.stdout_lines[1] if memory_usage.stdout_lines|length > 1 else '정보 없음' }}
