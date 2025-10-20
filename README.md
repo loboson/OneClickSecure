@@ -147,48 +147,10 @@ security_rules = {
 
 ---
 
-## 🛠️ 기술 스택
-
-### Backend
-
-```
-FastAPI 0.100+        # 고성능 비동기 웹 프레임워크
-SQLAlchemy 2.0        # ORM (Object-Relational Mapping)
-Pydantic 2.0          # 데이터 검증 및 직렬화
-Ansible 2.14+         # 인프라 자동화 엔진
-PyYAML 6.0            # YAML 파싱 및 보안 검증
-```
-
-### Frontend
-
-```
-Next.js 15.3          # React 프레임워크
-TypeScript 5.x        # 정적 타입 체크
-Radix UI              # 접근성 중심 UI 컴포넌트
-Tailwind CSS 4.x      # 유틸리티 CSS 프레임워크
-Lucide Icons          # 아이콘 라이브러리
-```
-
-### Automation & DevOps
-
-```
-Ansible 2.14+         # 구성 관리 및 자동화
-Python 3.9+           # 점검 로직 구현
-Shell Script          # Unix 시스템 점검
-```
-
-### Database
-
-```
-SQLite 3              # 경량 임베디드 데이터베이스
-```
-
----
-
 ## 🏗️ 시스템 아키텍처
 
 <div align="center">
-  <img src="아키텍처 사진.png" alt="OneClickSecure 시스템 아키텍처" width="800"/>
+  <img src="architecture.png" alt="OneClickSecure 시스템 아키텍처" width="800"/>
 </div>
 
 ### 시스템 구성도
