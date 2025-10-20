@@ -188,7 +188,7 @@ SQLite 3              # 경량 임베디드 데이터베이스
 ## 🏗️ 시스템 아키텍처
 
 <div align="center">
-  <img src="docs/images/architecture.png" alt="OneClickSecure 시스템 아키텍처" width="800"/>
+  <img src="아키텍처 사진.png" alt="OneClickSecure 시스템 아키텍처" width="800"/>
 </div>
 
 ### 시스템 구성도
