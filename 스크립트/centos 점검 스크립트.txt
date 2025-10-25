@@ -1,0 +1,485 @@
+#!/bin/bash
+
+outfile="/mnt/hgfs/centOS/SecurityCheck_$(date '+%Y%m%d_%H%M%S').csv"
+
+
+echo "항목코드,결과,설명" > "$outfile"
+
+# -----------------------------
+# U01 ~ U10
+# -----------------------------
+
+# U-01
+echo "[U-01] root 계정 원격 접속 제한"
+val=$(grep -i "^PermitRootLogin" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+[[ "$val" =~ ^(no|prohibit-password)$ ]] &&
+echo "U-01,양호,PermitRootLogin 설정 차단됨" >> "$outfile" ||
+echo "U-01,취약,PermitRootLogin 설정 허용 또는 없음" >> "$outfile"
+
+# U-02
+echo "[U-02] 패스워드 복잡성 설정"
+len=$(grep -i "^PASS_MIN_LEN" /etc/login.defs | awk '{print $2}')
+if [[ "$len" =~ ^[0-9]+$ ]] && [ "$len" -ge 8 ]; then
+  echo "U-02,양호,PASS_MIN_LEN=$len" >> "$outfile"
+else
+  echo "U-02,취약,PASS_MIN_LEN 설정 미흡 또는 없음" >> "$outfile"
+fi
+
+# U-03
+echo "[U-03] 불필요한 사용자 계정"
+users=$(awk -F: '$3 >= 1000 {print $1}' /etc/passwd)
+bad_users=""
+for u in $users; do
+  id -nG "$u" 2>/dev/null | grep -qw "wheel" && continue
+  [[ "$u" =~ ^(nobody|sshd)$ ]] && continue
+  bad_users+="$u "
+done
+[ -n "$bad_users" ] &&
+echo "U-03,취약,불필요한 계정: $bad_users" >> "$outfile" ||
+echo "U-03,양호,불필요한 계정 없음" >> "$outfile"
+
+# U-04
+echo "[U-04] SUID/SGID 파일 수 확인"
+cnt=$(find / -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null | wc -l)
+[[ "$cnt" =~ ^[0-9]+$ ]] && [ "$cnt" -le 50 ] &&
+echo "U-04,양호,SUID/SGID 파일 수 적절 ($cnt개)" >> "$outfile" ||
+echo "U-04,취약,SUID/SGID 파일이 많음 ($cnt개)" >> "$outfile"
+
+# U-05
+echo "[U-05] 방화벽 상태 확인"
+systemctl is-active firewalld &>/dev/null &&
+echo "U-05,양호,firewalld 서비스 실행 중" >> "$outfile" ||
+echo "U-05,취약,firewalld 서비스 비활성화" >> "$outfile"
+
+# U-06
+echo "[U-06] 패스워드 최대 사용 기간"
+val=$(grep "^PASS_MAX_DAYS" /etc/login.defs | awk '{print $2}')
+if [[ "$val" =~ ^[0-9]+$ ]]; then
+  [ "$val" -le 90 ] && echo "U-06,양호,PASS_MAX_DAYS=$val" >> "$outfile" ||
+  echo "U-06,취약,PASS_MAX_DAYS=$val (기준 초과)" >> "$outfile"
+else
+  echo "U-06,취약,PASS_MAX_DAYS 설정 없음 또는 오류" >> "$outfile"
+fi
+
+# U-07
+echo "[U-07] rsyslog 서비스 점검"
+systemctl is-enabled rsyslog &>/dev/null && systemctl is-active rsyslog &>/dev/null &&
+echo "U-07,양호,rsyslog 서비스 실행 중" >> "$outfile" ||
+echo "U-07,취약,rsyslog 서비스 비활성화" >> "$outfile"
+
+# U-08
+echo "[U-08] 히스토리 설정"
+hist=$(grep "^HISTSIZE" /etc/profile 2>/dev/null | awk -F= '{print $2}')
+[[ "$hist" =~ ^[0-9]+$ ]] && [ "$hist" -ge 100 ] &&
+echo "U-08,양호,HISTSIZE=$hist" >> "$outfile" ||
+echo "U-08,취약,HISTSIZE 설정 미흡 또는 없음" >> "$outfile"
+
+# U-09
+echo "[U-09] /etc/passwd 권한"
+perm=$(stat -c %a /etc/passwd)
+[[ "$perm" =~ ^[0-9]+$ ]] && [ "$perm" -le 644 ] &&
+echo "U-09,양호,/etc/passwd 권한 $perm" >> "$outfile" ||
+echo "U-09,취약,/etc/passwd 권한 $perm" >> "$outfile"
+
+# U-10
+echo "[U-10] 홈 디렉토리 퍼미션"
+bad=""
+for user in $(awk -F: '$3 >= 1000 {print $1}' /etc/passwd); do
+  dir=$(eval echo ~$user)
+  [ -d "$dir" ] || continue
+  p=$(stat -c %a "$dir")
+  [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -le 750 ] && continue
+  bad+="$user($p) "
+done
+[ -n "$bad" ] &&
+echo "U-10,취약,홈 디렉토리 권한 문제: $bad" >> "$outfile" ||
+echo "U-10,양호,홈 디렉토리 권한 적절" >> "$outfile"
+
+# ------------------------------
+# U-11 ~ U-20
+# ------------------------------
+echo "[U-11] 불필요한 서비스 확인"
+svc=$(systemctl list-units --type=service --state=running | grep -E 'telnet|nfs|rsh' | wc -l)
+[ "$svc" -eq 0 ] && echo "U-11,양호,불필요한 서비스 없음" >> "$outfile" || echo "U-11,취약,불필요한 서비스 실행 중" >> "$outfile"
+
+echo "[U-12] 계정 잠금 임계값 설정"
+val=$(grep "pam_tally2" /etc/pam.d/system-auth 2>/dev/null | grep -o "deny=[0-9]*" | cut -d= -f2)
+[[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -le 5 ] && echo "U-12,양호,로그인 실패 임계값 설정됨 (deny=$val)" >> "$outfile" || echo "U-12,취약,임계값 설정 없음 또는 기준 초과" >> "$outfile"
+
+echo "[U-13] SSH 포트 변경 여부"
+port=$(grep -i "^Port" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+[[ "$port" != "22" && "$port" != "" ]] && echo "U-13,양호,SSH 포트 변경됨 ($port)" >> "$outfile" || echo "U-13,취약,SSH 기본 포트(22) 사용 중" >> "$outfile"
+
+echo "[U-14] /etc/shadow 권한"
+perm=$(stat -c %a /etc/shadow)
+[[ "$perm" =~ ^[0-9]+$ ]] && [ "$perm" -le 400 ] && echo "U-14,양호,/etc/shadow 권한 $perm" >> "$outfile" || echo "U-14,취약,/etc/shadow 권한 $perm" >> "$outfile"
+
+echo "[U-15] cron 접근 제한"
+[ -f /etc/cron.allow ] && echo "U-15,양호,/etc/cron.allow 파일 존재" >> "$outfile" || echo "U-15,취약,/etc/cron.allow 파일 없음" >> "$outfile"
+
+echo "[U-16] 계정 비활성 기간 설정"
+val=$(grep "^INACTIVE" /etc/default/useradd 2>/dev/null | awk -F= '{print $2}')
+[[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -le 30 ] && echo "U-16,양호,INACTIVE=$val" >> "$outfile" || echo "U-16,취약,비활성 기간 미설정 또는 기준 초과" >> "$outfile"
+
+echo "[U-17] 로그 파일 존재 확인"
+log_count=$(ls /var/log/*.log 2>/dev/null | wc -l)
+[ "$log_count" -gt 0 ] && echo "U-17,양호,로그 파일 $log_count개 존재" >> "$outfile" || echo "U-17,취약,로그 파일 없음" >> "$outfile"
+
+echo "[U-18] UID 0 계정 점검"
+uid0=$(awk -F: '$3==0{print $1}' /etc/passwd)
+[ "$uid0" = "root" ] && echo "U-18,양호,root만 UID 0 사용" >> "$outfile" || echo "U-18,취약,UID 0 계정: $uid0" >> "$outfile"
+
+echo "[U-19] world writable 파일 점검"
+ww=$(find / -xdev -type f -perm -0002 2>/dev/null | wc -l)
+[ "$ww" -eq 0 ] && echo "U-19,양호,World Writable 파일 없음" >> "$outfile" || echo "U-19,취약,World Writable 파일 $ww개 존재" >> "$outfile"
+
+echo "[U-20] 시간 동기화 서비스 확인"
+timed=$(timedatectl status 2>/dev/null | grep "NTP service" | grep -i active)
+[ -n "$timed" ] && echo "U-20,양호,NTP 서비스 활성화" >> "$outfile" || echo "U-20,취약,NTP 서비스 미활성 또는 미설정" >> "$outfile"
+
+# -------------------------------
+# U21 ~ U30
+# -------------------------------
+
+echo "[U-21] SUID/SGID 설정 파일 점검"
+result=$(find / -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null)
+[ -n "$result" ] && echo "U-21,취약,SUID/SGID 설정 파일이 존재합니다." >> "$outfile" || echo "U-21,양호,SUID/SGID 설정 파일이 존재하지 않습니다." >> "$outfile"
+
+echo "[U-22] 사용자 홈 디렉터리 권한 점검"
+result=$(ls -ld /home/* 2>/dev/null | awk '$1 ~ /^d......rwx/')
+[ -n "$result" ] && echo "U-22,취약,홈 디렉터리에 other 쓰기 권한이 있습니다." >> "$outfile" || echo "U-22,양호,홈 디렉터리 권한이 적절합니다." >> "$outfile"
+
+echo "[U-23] world writable 파일 점검"
+result=$(find / -xdev -type f -perm -0002 2>/dev/null)
+[ -n "$result" ] && echo "U-23,취약,world writable 파일이 존재합니다." >> "$outfile" || echo "U-23,양호,world writable 파일이 존재하지 않습니다." >> "$outfile"
+
+echo "[U-24] .rhosts 파일 존재 여부"
+result=$(find / -name ".rhosts" 2>/dev/null)
+[ -n "$result" ] && echo "U-24,취약,.rhosts 파일이 존재합니다." >> "$outfile" || echo "U-24,양호,.rhosts 파일이 존재하지 않습니다." >> "$outfile"
+
+echo "[U-25] 패스워드 파일 내 + 설정 확인"
+grep -q "^+:" /etc/passwd /etc/shadow /etc/group 2>/dev/null
+[ $? -eq 0 ] && echo "U-25,취약,패스워드 관련 파일에 '+' 항목이 존재합니다." >> "$outfile" || echo "U-25,양호,'+' 항목이 존재하지 않습니다." >> "$outfile"
+
+echo "[U-26] cron 접근 통제 설정 확인"
+if [ -f /etc/cron.allow ]; then
+  echo "U-26,양호,/etc/cron.allow 파일이 존재합니다." >> "$outfile"
+else
+  echo "U-26,취약,/etc/cron.allow 파일이 존재하지 않습니다." >> "$outfile"
+fi
+
+echo "[U-27] inetd.conf 내 불필요한 서비스 점검"
+[ -f /etc/inetd.conf ] && grep -Ev '^(#|$)' /etc/inetd.conf | grep -q . && echo "U-27,취약,inetd.conf에 불필요한 서비스가 설정되어 있습니다." >> "$outfile" || echo "U-27,양호,불필요한 서비스가 없습니다 또는 파일 없음" >> "$outfile"
+
+echo "[U-28] xinetd.conf disable 설정 점검"
+[ -f /etc/xinetd.conf ] && grep -i "disable" /etc/xinetd.conf | grep -v "yes" | grep -q . && echo "U-28,취약,xinetd.conf에서 disable 설정이 미흡합니다." >> "$outfile" || echo "U-28,양호,xinetd 서비스 설정이 적절합니다." >> "$outfile"
+
+echo "[U-29] 불필요한 서비스 자동 실행 점검"
+chkconfig --list 2>/dev/null | grep ':on' | grep -vE 'crond|sshd|network|rsyslog' | grep -q .
+[ $? -eq 0 ] && echo "U-29,취약,자동 실행 설정된 불필요한 서비스가 있습니다." >> "$outfile" || echo "U-29,양호,자동 실행 서비스가 적절합니다." >> "$outfile"
+
+echo "[U-30] rc 스크립트 내 불필요한 항목 점검"
+result=$(ls /etc/rc.d/rc*.d/ 2>/dev/null | grep -Ev 'S[0-9]{2}(crond|sshd|network|rsyslog)')
+[ -n "$result" ] && echo "U-30,취약,자동 실행 항목에 불필요한 스크립트가 존재합니다." >> "$outfile" || echo "U-30,양호,자동 실행 스크립트 설정이 적절합니다." >> "$outfile"
+
+# --------------------------------
+# U31 ~ U40
+# --------------------------------
+
+echo "[U-31] hosts.equiv 파일 존재 여부 점검"
+[ -f /etc/hosts.equiv ] && echo "U-31,취약,/etc/hosts.equiv 파일이 존재합니다." >> "$outfile" || echo "U-31,양호,/etc/hosts.equiv 파일이 존재하지 않습니다." >> "$outfile"
+
+echo "[U-32] 환경변수 PATH에 현재 디렉토리(.) 포함 여부 점검"
+echo $PATH | grep -q '(^|:)\.:'
+[ $? -eq 0 ] && echo "U-32,취약,환경변수 PATH에 현재 디렉토리(.)가 포함되어 있습니다." >> "$outfile" || echo "U-32,양호,환경변수 PATH에 현재 디렉토리(.)가 포함되지 않았습니다." >> "$outfile"
+
+echo "[U-33] /etc/hosts 파일 소유자 및 권한 점검"
+perm=$(stat -c "%a %U" /etc/hosts 2>/dev/null)
+echo "$perm" | grep -qv "^6[0-4][0-4] root"
+[ $? -eq 0 ] && echo "U-33,취약,/etc/hosts 파일 권한 또는 소유자가 적절하지 않습니다." >> "$outfile" || echo "U-33,양호,/etc/hosts 파일 설정이 적절합니다." >> "$outfile"
+
+echo "[U-34] Session Timeout 설정 점검"
+grep -q "TMOUT=" /etc/profile
+[ $? -eq 0 ] && echo "U-34,양호,Session Timeout이 설정되어 있습니다." >> "$outfile" || echo "U-34,취약,Session Timeout이 설정되어 있지 않습니다." >> "$outfile"
+
+echo "[U-35] root 홈 디렉토리 존재 여부 및 PATH 점검"
+[ -d /root ] && echo $PATH | grep -q "/root" && echo "U-35,취약,root 홈 디렉토리가 PATH에 포함되어 있습니다." >> "$outfile" || echo "U-35,양호,root 홈 디렉토리 설정이 적절합니다." >> "$outfile"
+
+echo "[U-36] 불필요한 계정 존재 여부 점검"
+result=$(awk -F: '$3 >= 1000 && $1 != "nobody" && $1 != "abjun0"' /etc/passwd)
+[ -n "$result" ] && echo "U-36,취약,불필요한 계정이 존재합니다." >> "$outfile" || echo "U-36,양호,불필요한 계정이 없습니다." >> "$outfile"
+
+echo "[U-37] root 이외 UID 0 계정 존재 여부 점검"
+result=$(awk -F: '($3 == 0 && $1 != "root")' /etc/passwd)
+[ -n "$result" ] && echo "U-37,취약,UID 0을 사용하는 계정이 존재합니다." >> "$outfile" || echo "U-37,양호,UID 0 계정은 root 뿐입니다." >> "$outfile"
+
+echo "[U-38] 사용자 shell 설정 점검"
+result=$(awk -F: '$7 ~ /false|nologin/' /etc/passwd)
+[ -z "$result" ] && echo "U-38,취약,nologin 설정이 적절히 되어 있지 않습니다." >> "$outfile" || echo "U-38,양호,사용자 shell 설정이 적절합니다." >> "$outfile"
+
+echo "[U-39] 계정 잠금 임계값 설정 점검"
+grep -q "deny=" /etc/pam.d/system-auth
+[ $? -eq 0 ] && echo "U-39,양호,계정 잠금 임계값이 설정되어 있습니다." >> "$outfile" || echo "U-39,취약,계정 잠금 임계값이 설정되지 않았습니다." >> "$outfile"
+
+echo "[U-40] su 명령 제한 설정 점검"
+grep -q "pam_wheel.so" /etc/pam.d/su
+[ $? -eq 0 ] && echo "U-40,양호,su 명령 제한 설정이 적용되어 있습니다." >> "$outfile" || echo "U-40,취약,su 명령 제한 설정이 적용되지 않았습니다." >> "$outfile"
+
+# --------------------------------
+# U41 ~ U50
+# -------------------------------
+
+echo "[U-41] 불필요한 SUID, SGID 비활성화"
+suid_files=$(find / -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null | wc -l)
+if [ "$suid_files" -gt 0 ]; then
+    echo "U-41,취약,SUID/SGID 설정 파일이 존재함" >> "$outfile"
+else
+    echo "U-41,양호,SUID/SGID 설정 파일이 존재하지 않음" >> "$outfile"
+fi
+
+echo "[U-42] 로그온 경고 메시지 설정 여부"
+if grep -q "Unauthorized" /etc/motd 2>/dev/null || grep -q "Unauthorized" /etc/issue 2>/dev/null; then
+    echo "U-42,양호,경고 메시지가 설정되어 있음" >> "$outfile"
+else
+    echo "U-42,취약,경고 메시지가 설정되지 않음" >> "$outfile"
+fi
+
+echo "[U-43] root 홈 디렉토리와 PATH 보호"
+if echo $PATH | grep -Eq '(^|:)(\.|::|:)' ; then
+    echo "U-43,취약,PATH에 현재 디렉토리 또는 공백 경로 포함" >> "$outfile"
+else
+    echo "U-43,양호,PATH 설정에 이상 없음" >> "$outfile"
+fi
+
+echo "[U-44] UMASK 설정 관리"
+umask_val=$(umask)
+if [[ "$umask_val" == "0022" || "$umask_val" == "0027" ]]; then
+    echo "U-44,양호,UMASK 설정이 안전함 ($umask_val)" >> "$outfile"
+else
+    echo "U-44,취약,UMASK 설정이 비표준 ($umask_val)" >> "$outfile"
+fi
+
+echo "[U-45] 홈 디렉토리 환경변수 설정"
+if [ -n "$HOME" ] && [ "$HOME" != "/" ]; then
+    echo "U-45,양호,HOME 환경변수가 정상 설정됨" >> "$outfile"
+else
+    echo "U-45,취약,HOME 환경변수가 비정상 또는 루트로 설정됨" >> "$outfile"
+fi
+
+echo "[U-46] 소유자 없는 파일 존재 여부 확인"
+orphans=$(find /home /etc /usr -nouser -o -nogroup 2>/dev/null | wc -l)
+
+if [ "$orphans" -eq 0 ]; then
+  echo "U-46,양호,소유자 없는 파일이 없습니다." >> "$outfile"
+else
+  echo "U-46,취약,소유자 없는 파일이 $orphans개 존재합니다." >> "$outfile"
+fi
+
+echo "[U-47] 시스템 주요 파일 권한 보호 설정 확인"
+status="양호"
+for file in /etc/passwd /etc/shadow; do
+  if [ -f "$file" ]; then
+    perm=$(stat -c "%a" "$file" 2>/dev/null)
+    if [ "$file" = "/etc/shadow" ] && [[ "$perm" =~ ^[0-9]+$ ]] && [ "$perm" -gt 640 ]; then
+      status="취약"
+    elif [ "$file" = "/etc/passwd" ] && [[ "$perm" =~ ^[0-9]+$ ]] && [ "$perm" -gt 644 ]; then
+      status="취약"
+    fi
+  fi
+done
+echo "U-47,$status,주요 파일 권한 점검 완료" >> "$outfile"
+
+
+echo "[U-48] 패스워드 최소 사용 기간 설정 확인"
+min_days=$(grep "^PASS_MIN_DAYS" /etc/login.defs 2>/dev/null | awk '{print $2}')
+if [[ "$min_days" =~ ^[0-9]+$ ]] && [ "$min_days" -ge 1 ]; then
+  echo "U-48,양호,PASS_MIN_DAYS 설정이 적절함 ($min_days)" >> "$outfile"
+else
+  echo "U-48,취약,PASS_MIN_DAYS 설정이 미흡하거나 없음" >> "$outfile"
+fi
+
+echo "[U-49] 패스워드 최대 사용 기간 설정 확인"
+max_days=$(grep "^PASS_MAX_DAYS" /etc/login.defs 2>/dev/null | awk '{print $2}')
+if [[ "$max_days" =~ ^[0-9]+$ ]] && [ "$max_days" -le 90 ]; then
+  echo "U-49,양호,PASS_MAX_DAYS 설정이 적절함 ($max_days)" >> "$outfile"
+else
+  echo "U-49,취약,PASS_MAX_DAYS 설정이 부적절하거나 없음" >> "$outfile"
+fi
+
+echo "[U-50] 패스워드 변경 경고 기간 설정 확인"
+warn_days=$(grep "^PASS_WARN_AGE" /etc/login.defs 2>/dev/null | awk '{print $2}')
+if [[ "$warn_days" =~ ^[0-9]+$ ]] && [ "$warn_days" -ge 7 ]; then
+  echo "U-50,양호,PASS_WARN_AGE 설정이 적절함 ($warn_days)" >> "$outfile"
+else
+  echo "U-50,취약,PASS_WARN_AGE 설정이 부족하거나 없음" >> "$outfile"
+fi
+
+# -------------------------------
+# U-51 ~ U-60
+# -------------------------------
+
+echo "[U-51] 동일한 UID 사용 계정 존재 여부 확인"
+dup_uid=$(awk -F: '{print $3}' /etc/passwd | sort | uniq -d)
+if [ -n "$dup_uid" ]; then
+  users=$(awk -F: -v uid="$dup_uid" '$3 == uid {print $1}' /etc/passwd)
+  echo "U-51,취약,동일한 UID 사용 계정: $users" >> "$outfile"
+else
+  echo "U-51,양호,동일한 UID 사용 계정 없음" >> "$outfile"
+fi
+
+echo "[U-52] 사용자 shell 설정 검토"
+nologins=$(awk -F: '$7 ~ /(nologin|false)/' /etc/passwd | wc -l)
+[ "$nologins" -ge 1 ] && echo "U-52,양호,nologin 또는 false 설정 사용자 있음" >> "$outfile" ||
+echo "U-52,취약,nologin 또는 false 설정 사용자 없음" >> "$outfile"
+
+echo "[U-53] 계정별 홈 디렉토리 존재 여부"
+missing=""
+for user in $(awk -F: '$3 >= 1000 {print $1}' /etc/passwd); do
+  home_dir=$(eval echo "~$user")
+  [ ! -d "$home_dir" ] && missing+="$user "
+done
+[ -n "$missing" ] && echo "U-53,취약,홈 디렉토리 없는 계정: $missing" >> "$outfile" ||
+echo "U-53,양호,모든 계정의 홈 디렉토리 존재" >> "$outfile"
+
+echo "[U-54] session timeout 설정 여부"
+timeout=$(grep "TMOUT=" /etc/profile /etc/bashrc 2>/dev/null | grep -v '^#' | awk -F= '{print $2}' | sort -n | head -n 1)
+if [[ "$timeout" =~ ^[0-9]+$ ]] && [ "$timeout" -le 600 ]; then
+  echo "U-54,양호,TMOUT 설정 적절 ($timeout초)" >> "$outfile"
+else
+  echo "U-54,취약,TMOUT 설정 부적절 또는 없음" >> "$outfile"
+fi
+
+echo "[U-55] root 계정 원격 접속 제한 확인"
+permit=$(grep -i "^PermitRootLogin" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+[[ "$permit" == "no" || "$permit" == "prohibit-password" ]] &&
+echo "U-55,양호,root 계정 원격 접속 차단 설정됨" >> "$outfile" ||
+echo "U-55,취약,root 계정 원격 접속 허용됨 또는 설정 없음" >> "$outfile"
+
+echo "[U-56] telnet 서비스 비활성화"
+active=$(systemctl is-enabled telnet.socket 2>/dev/null)
+[[ "$active" == "disabled" || "$active" == "masked" ]] &&
+echo "U-56,양호,telnet 서비스 비활성화됨" >> "$outfile" ||
+echo "U-56,취약,telnet 서비스가 활성화 상태임" >> "$outfile"
+
+echo "[U-57] FTP 서비스 비활성화 여부"
+ftp_status=$(systemctl is-enabled vsftpd 2>/dev/null)
+[[ "$ftp_status" == "disabled" || "$ftp_status" == "masked" ]] &&
+echo "U-57,양호,FTP 서비스 비활성화됨" >> "$outfile" ||
+echo "U-57,취약,FTP 서비스가 활성화됨" >> "$outfile"
+
+echo "[U-58] FTP 계정 접근 통제"
+if grep -qvE '^(#|$)' /etc/vsftpd/ftpusers 2>/dev/null && grep -q 'root' /etc/vsftpd/ftpusers; then
+  echo "U-58,양호,FTP 접근 제한 설정 파일에 root 계정 포함" >> "$outfile"
+else
+  echo "U-58,취약,FTP 접근 제한 설정 미흡 또는 없음" >> "$outfile"
+fi
+
+echo "[U-59] SSH 설정 파일 권한 확인"
+perm=$(stat -c "%a" /etc/ssh/sshd_config 2>/dev/null)
+if [[ "$perm" =~ ^[0-9]+$ ]] && [ "$perm" -le 600 ]; then
+  echo "U-59,양호,SSH 설정 파일 권한 적절 ($perm)" >> "$outfile"
+else
+  echo "U-59,취약,SSH 설정 파일 권한 부적절 ($perm)" >> "$outfile"
+fi
+
+echo "[U-60] NFS 서비스 비활성화"
+nfs_status=$(systemctl is-enabled nfs 2>/dev/null)
+[[ "$nfs_status" == "disabled" || "$nfs_status" == "masked" ]] &&
+echo "U-60,양호,NFS 서비스 비활성화됨" >> "$outfile" ||
+echo "U-60,취약,NFS 서비스가 활성화됨" >> "$outfile"
+
+# -------------------------------
+# U-61 ~ U-72
+# -------------------------------
+
+echo "[U-61] DNS 보안 설정 확인"
+dns_conf=$(grep -i "allow-query" /etc/named.conf 2>/dev/null)
+if echo "$dns_conf" | grep -q "localhost"; then
+  echo "U-61,양호,DNS 쿼리 제한 설정 존재" >> "$outfile"
+else
+  echo "U-61,취약,DNS 쿼리 제한 설정 없음 또는 부적절" >> "$outfile"
+fi
+
+echo "[U-62] Apache 디렉터리 리스팅 비활성화"
+if [ -f /etc/httpd/conf/httpd.conf ]; then
+  options=$(grep -i "Options" /etc/httpd/conf/httpd.conf | grep -v "#" | grep Indexes)
+  [ -z "$options" ] && echo "U-62,양호,디렉터리 리스팅 비활성화됨" >> "$outfile" ||
+  echo "U-62,취약,디렉터리 리스팅 설정 존재" >> "$outfile"
+else
+  echo "U-62,해당 없음,Apache 미사용 또는 설정 파일 없음" >> "$outfile"
+fi
+
+echo "[U-63] Apache 불필요한 모듈 제거 여부"
+if [ -d /etc/httpd/conf.modules.d ]; then
+  loaded=$(grep -i "LoadModule" /etc/httpd/conf.modules.d/*.conf | grep -E "status_module|autoindex_module" | grep -v "#")
+  [ -z "$loaded" ] && echo "U-63,양호,불필요한 모듈 제거됨" >> "$outfile" ||
+  echo "U-63,취약,불필요한 모듈 활성화됨" >> "$outfile"
+else
+  echo "U-63,해당 없음,Apache 미사용 또는 모듈 설정 없음" >> "$outfile"
+fi
+
+echo "[U-64] Apache 상위 디렉터리 접근 금지 설정"
+if grep -iq "AllowOverride None" /etc/httpd/conf/httpd.conf 2>/dev/null; then
+  echo "U-64,양호,상위 디렉터리 접근 제한 설정됨" >> "$outfile"
+else
+  echo "U-64,취약,상위 디렉터리 접근 제한 설정 없음" >> "$outfile"
+fi
+
+echo "[U-65] Apache 사용자 디렉터리 접근 제한"
+if grep -iq "UserDir disable" /etc/httpd/conf/httpd.conf 2>/dev/null; then
+  echo "U-65,양호,사용자 디렉터리 접근 제한 설정됨" >> "$outfile"
+else
+  echo "U-65,취약,사용자 디렉터리 접근 제한 설정 없음" >> "$outfile"
+fi
+
+echo "[U-66] Apache 파일 업로드 크기 제한 설정"
+limit=$(grep -i "LimitRequestBody" /etc/httpd/conf/httpd.conf 2>/dev/null | grep -v "#")
+[ -n "$limit" ] && echo "U-66,양호,업로드 크기 제한 설정 존재" >> "$outfile" ||
+echo "U-66,취약,파일 업로드 크기 제한 설정 없음" >> "$outfile"
+
+echo "[U-67] 웹 서비스 오류 메시지 노출 방지"
+expose=$(grep -i "ServerTokens" /etc/httpd/conf/httpd.conf 2>/dev/null)
+if echo "$expose" | grep -iq "Prod"; then
+  echo "U-67,양호,에러 메시지 정보 노출 방지 설정됨" >> "$outfile"
+else
+  echo "U-67,취약,ServerTokens 설정 미흡 또는 없음" >> "$outfile"
+fi
+
+echo "[U-68] 웹 서비스 디버깅 기능 비활성화"
+sig=$(grep -i "ServerSignature" /etc/httpd/conf/httpd.conf 2>/dev/null)
+if echo "$sig" | grep -iq "Off"; then
+  echo "U-68,양호,디버그 정보 노출 차단됨" >> "$outfile"
+else
+  echo "U-68,취약,ServerSignature 설정 없음 또는 부적절" >> "$outfile"
+fi
+
+echo "[U-69] 웹 서비스 접근 제어 설정"
+allow=$(grep -i "Require all denied" /etc/httpd/conf/httpd.conf 2>/dev/null)
+if [ -n "$allow" ]; then
+  echo "U-69,양호,접근 제어 설정 존재" >> "$outfile"
+else
+  echo "U-69,취약,접근 제어 설정 없음" >> "$outfile"
+fi
+
+echo "[U-70] 로그의 정기적 검토 및 보고"
+log="/var/log/httpd/access_log"
+if [ -f "$log" ]; then
+  recent=$(find "$log" -mtime -7 2>/dev/null)
+  [ -n "$recent" ] && echo "U-70,양호,7일 이내 웹 로그 존재" >> "$outfile" ||
+  echo "U-70,취약,최근 웹 로그 없음" >> "$outfile"
+else
+  echo "U-70,해당 없음,로그 파일 존재하지 않음" >> "$outfile"
+fi
+
+echo "[U-71] 웹 서비스에 보안 패치 적용 여부"
+ver=$(httpd -v 2>/dev/null | grep version)
+[ -n "$ver" ] && echo "U-71,확인 필요,웹 서버 버전: $ver" >> "$outfile" ||
+echo "U-71,해당 없음,Apache 미설치 또는 명령어 실패" >> "$outfile"
+
+echo "[U-72] 보안 기능이 강화된 웹 서버 사용 여부"
+mod=$(httpd -M 2>/dev/null | grep -i security)
+[ -n "$mod" ] && echo "U-72,양호,보안 모듈 사용 중 (mod_security 등)" >> "$outfile" ||
+echo "U-72,취약,보안 기능 모듈 미사용 또는 설정 없음" >> "$outfile"
+
+(echo -e '\xEF\xBB\xBF'; cat "$outfile") > "${outfile%.csv}_utf8bom.csv"
+rm -f "$outfile"
